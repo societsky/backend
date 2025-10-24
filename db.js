@@ -1,28 +1,30 @@
 const mysql = require('mysql2/promise');
 
-// Configuration de la connexion MySQL
 const pool = mysql.createPool({
-    host: 'poce1950.o2switch.net',
-    user: 'poce1950_societsky_user',        // L'utilisateur créé dans le schema.sql
-    password: 'jadecedricsimba31',      // Le mot de passe défini dans le schema.sql
-    database: 'poce1950_societsky_db',  // ⚠️ La VRAIE base de données !
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
+  host: process.env.DATABASE_HOST,
+  user: process.env.DATABASE_USER,
+  password: process.env.DATABASE_PASSWORD,
+  database: process.env.DATABASE_NAME,
+  port: process.env.DATABASE_PORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-// Test de la connexion
+// Test de connexion
 pool.getConnection()
-    .then(connection => {
-        console.log('✅ Connecté à la base de données MySQL (whisky_admin)');
-        connection.release();
-    })
-    .catch(err => {
-        console.error('❌ Erreur de connexion à MySQL:', err.message);
-        console.error('Vérifiez que :');
-        console.error('1. XAMPP MySQL est démarré');
-        console.error('2. La base "whisky_admin" existe');
-        console.error('3. L\'utilisateur "whisky_app" existe avec les bons droits');
-    });
+  .then(connection => {
+    console.log('✅ Base de données: Connectée');
+    console.log(`📊 Database: ${process.env.DATABASE_NAME}`);
+    console.log(`👤 User: ${process.env.DATABASE_USER}`);
+    connection.release();
+  })
+  .catch(err => {
+    console.error('❌ Erreur de connexion à MySQL:');
+    console.error('Host:', process.env.DATABASE_HOST);
+    console.error('User:', process.env.DATABASE_USER);
+    console.error('Database:', process.env.DATABASE_NAME);
+    console.error('Error:', err.message);
+  });
 
 module.exports = pool;
