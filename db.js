@@ -2,10 +2,10 @@ const mysql = require('mysql2/promise');
 
 // Configuration de la connexion MySQL
 const pool = mysql.createPool({
-    host: 'localhost',
-    user: 'whisky_app',        // L'utilisateur créé dans le schema.sql
-    password: 'admin123',      // Le mot de passe défini dans le schema.sql
-    database: 'whisky_admin',  // ⚠️ La VRAIE base de données !
+    host: 'poce1950.o2switch.net',
+    user: 'poce1950_societsky_user',        // L'utilisateur créé dans le schema.sql
+    password: 'jadecedricsimba31',      // Le mot de passe défini dans le schema.sql
+    database: 'poce1950_societsky_db',  // ⚠️ La VRAIE base de données !
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
