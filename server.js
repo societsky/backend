@@ -14,11 +14,15 @@ const JWT_SECRET = 'votre_secret_jwt_changez_moi_en_production';
 
 // Middlewares
 app.use(cors({
-    origin: 'http://localhost:3000',
-    credentials: true
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  origin: [
+    'https://admin.societsky.com',
+    'http://localhost:3000',
+    'http://localhost:3001'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));;
 
 // Middleware d'authentification
 const authenticateToken = (req, res, next) => {
