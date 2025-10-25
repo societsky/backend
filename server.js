@@ -11,7 +11,16 @@ const csv = require('csv-parser');
 
 const app = express();
 const PORT = process.env.PORT || 3001; // ✅ CORRECTION : Utilise le PORT de l'environnement
-const JWT_SECRET = process.env.JWT_SECRET || 'votre_secret_jwt_changez_moi_en_production';
+const JWT_SECRET = process.env.JWT_SECRET || 'JadeCedric31';
+
+// Ajoutez temporairement dans server.js
+const https = require('https');
+https.get('https://api.ipify.org?format=json', (resp) => {
+  let data = '';
+  resp.on('data', (chunk) => data += chunk);
+  resp.on('end', () => console.log('🌐 IP de Render:', JSON.parse(data).ip));
+});
+
 
 // Middlewares
 app.use(cors({
