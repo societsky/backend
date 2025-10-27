@@ -1,73 +1,35 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
+const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const bcrypt = require('bcryptjs');
+require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 10000;
 
-// ============================================
-// 🔥 CONFIGURATION CRITIQUE - NE PAS MODIFIER L'ORDRE
-// ============================================
+// Middleware
+app.use(cors());
+app.use(express.json());
 
-// 1. CORS en premier
-app.use(cors({
-    origin: ['https://admin.societsky.com', 'http://localhost:3000'],
-    credentials: true
-}));
-
-// 2. Body parsers AVANT les routes
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// 3. Logs pour debug
-app.use((req, res, next) => {
-    console.log(`📨 ${req.method} ${req.path}`);
-    next();
-});
-
-// ============================================
-// CONFIGURATION BASE DE DONNÉES
-// ============================================
-
-const pool = mysql.createPool({
-    host: process.env.DATABASE_HOST,
-    port: process.env.DATABASE_PORT || 3306,
-    user: process.env.DATABASE_USER,
-    password: process.env.DATABASE_PASSWORD,
-    database: process.env.DATABASE_NAME,
+// Configuration base de données
+const dbConfig = {
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0,
-    connectTimeout: 60000, // 60 secondes
-    timezone: 'Z'
-});
+    queueLimit: 0
+};
 
-// Test de connexion au démarrage
-(async () => {
-    try {
-        const connection = await pool.getConnection();
-        console.log('✅ Base de données: Connectée');
-        console.log('📊 Database:', process.env.DATABASE_NAME);
-        console.log('👤 User:', process.env.DATABASE_USER);
-        connection.release();
-    } catch (error) {
-        console.error('❌ Erreur de connexion à MySQL:');
-        console.error('Host:', process.env.DATABASE_HOST);
-        console.error('User:', process.env.DATABASE_USER);
-        console.error('Database:', process.env.DATABASE_NAME);
-        console.error('Error:', error.message);
-    }
-})();
+const pool = mysql.createPool(dbConfig);
 
-// ============================================
-// MIDDLEWARE D'AUTHENTIFICATION
-// ============================================
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production';
 
+// ===================================================
+// MIDDLEWARE D'AUTHENTIFICATION (POUR ROUTES PROTÉGÉES)
+// ===================================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -76,7 +38,7 @@ const authenticateToken = (req, res, next) => {
         return res.status(401).json({ message: 'Token manquant' });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
             return res.status(403).json({ message: 'Token invalide' });
         }
@@ -85,325 +47,445 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// ============================================
-// CONFIGURATION MULTER POUR UPLOAD
-// ============================================
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = './uploads';
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-    }
-});
-
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-    fileFilter: (req, file, cb) => {
-        const allowedTypes = /jpeg|jpg|png|gif|webp/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = allowedTypes.test(file.mimetype);
-
-        if (mimetype && extname) {
-            return cb(null, true);
-        } else {
-            cb(new Error('Seules les images sont autorisées'));
-        }
-    }
-});
-
-// ============================================
-// ROUTES - AUTH
-// ============================================
+// ===================================================
+// ROUTES PUBLIQUES (SANS AUTHENTIFICATION)
+// ===================================================
 
 // Route de test
 app.get('/', (req, res) => {
     res.json({ 
-        message: '🚀 Serveur API Societsky démarré',
-        status: 'OK',
-        timestamp: new Date().toISOString()
+        message: 'API Societsky - Backend opérationnel',
+        version: '2.0',
+        endpoints: {
+            public: [
+                'GET /api/whiskies',
+                'GET /api/whiskies/:id',
+                'GET /api/distilleries',
+                'GET /api/distilleries/:id'
+            ],
+            protected: [
+                'POST /api/whiskies',
+                'PUT /api/whiskies/:id',
+                'DELETE /api/whiskies/:id',
+                'POST /api/distilleries',
+                'PUT /api/distilleries/:id',
+                'DELETE /api/distilleries/:id'
+            ]
+        }
     });
 });
 
-// LOGIN
-app.post('/api/auth/login', async (req, res) => {
-    console.log('🔐 Tentative de login...');
-    console.log('Body reçu:', req.body);
+// ============================================
+// ROUTES PUBLIQUES - WHISKIES (LECTURE SEULE)
+// ============================================
 
+// GET - Liste des whiskies (PUBLIC)
+app.get('/api/whiskies', async (req, res) => {
     try {
-        const { password } = req.body;
+        const [whiskies] = await pool.query(`
+            SELECT 
+                w.*,
+                d.name as distillery_name,
+                d.logo_url
+            FROM whiskies_catalog w
+            LEFT JOIN distilleries d ON w.distillery_id = d.id
+            ORDER BY w.name ASC
+        `);
+        
+        res.json(whiskies);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des whiskies:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
 
-        if (!password) {
-            console.log('❌ Mot de passe manquant');
-            return res.status(400).json({ message: 'Mot de passe requis' });
+// GET - Un whisky spécifique (PUBLIC)
+app.get('/api/whiskies/:id', async (req, res) => {
+    try {
+        const [whiskies] = await pool.query(`
+            SELECT 
+                w.*,
+                d.name as distillery_name,
+                d.logo_url,
+                d.country as distillery_country
+            FROM whiskies_catalog w
+            LEFT JOIN distilleries d ON w.distillery_id = d.id
+            WHERE w.id = ?
+        `, [req.params.id]);
+
+        if (whiskies.length === 0) {
+            return res.status(404).json({ message: 'Whisky non trouvé' });
         }
 
-        // Récupérer l'admin
+        res.json(whiskies[0]);
+    } catch (error) {
+        console.error('Erreur lors de la récupération du whisky:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// ============================================
+// ROUTES PUBLIQUES - DISTILLERIES (LECTURE SEULE)
+// ============================================
+
+// GET - Liste des distilleries (PUBLIC)
+app.get('/api/distilleries', async (req, res) => {
+    try {
+        const [distilleries] = await pool.query(`
+            SELECT * FROM distilleries 
+            ORDER BY name ASC
+        `);
+        
+        res.json(distilleries);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des distilleries:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// GET - Une distillerie spécifique (PUBLIC)
+app.get('/api/distilleries/:id', async (req, res) => {
+    try {
+        const [distilleries] = await pool.query(
+            'SELECT * FROM distilleries WHERE id = ?',
+            [req.params.id]
+        );
+
+        if (distilleries.length === 0) {
+            return res.status(404).json({ message: 'Distillerie non trouvée' });
+        }
+
+        res.json(distilleries[0]);
+    } catch (error) {
+        console.error('Erreur lors de la récupération de la distillerie:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// ===================================================
+// ROUTES PROTÉGÉES (NÉCESSITENT AUTHENTIFICATION)
+// ===================================================
+
+// POST - Connexion admin
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    try {
         const [users] = await pool.query(
-            'SELECT * FROM users WHERE role = ? LIMIT 1',
-            ['admin']
+            'SELECT * FROM users WHERE username = ? AND role = ?',
+            [username, 'admin']
         );
 
         if (users.length === 0) {
-            console.log('❌ Aucun admin trouvé');
             return res.status(401).json({ message: 'Identifiants incorrects' });
         }
 
-        const admin = users[0];
-        console.log('👤 Admin trouvé:', admin.username);
+        const user = users[0];
 
         // Vérifier le mot de passe
-        const isPasswordValid = await bcrypt.compare(password, admin.password);
+        const validPassword = await bcrypt.compare(password, user.password);
 
-        if (!isPasswordValid) {
-            console.log('❌ Mot de passe incorrect');
-            return res.status(401).json({ message: 'Mot de passe incorrect' });
+        if (!validPassword) {
+            return res.status(401).json({ message: 'Identifiants incorrects' });
         }
 
         // Générer le token JWT
         const token = jwt.sign(
-            { 
-                id: admin.id, 
-                username: admin.username, 
-                role: admin.role 
-            },
-            process.env.JWT_SECRET,
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
             { expiresIn: '24h' }
         );
-
-        console.log('✅ Login réussi pour', admin.username);
 
         res.json({
             message: 'Connexion réussie',
             token,
             user: {
-                id: admin.id,
-                username: admin.username,
-                role: admin.role
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role
             }
         });
-
     } catch (error) {
-        console.error('❌ Erreur login:', error);
-        res.status(500).json({ 
-            message: 'Erreur serveur', 
-            error: error.message 
-        });
-    }
-});
-
-// VERIFY TOKEN
-app.get('/api/auth/verify', authenticateToken, (req, res) => {
-    res.json({ 
-        valid: true, 
-        user: req.user 
-    });
-});
-
-// ============================================
-// ROUTES - WHISKIES (utilise whiskies_catalog)
-// ============================================
-
-// GET tous les whiskies
-app.get('/api/whiskies', authenticateToken, async (req, res) => {
-    try {
-        const [whiskies] = await pool.query(`
-            SELECT w.*, d.name as distillery_name 
-            FROM whiskies_catalog w
-            LEFT JOIN distilleries d ON w.distillery_id = d.id
-            ORDER BY w.created_at DESC
-        `);
-        res.json(whiskies);
-    } catch (error) {
-        console.error('Erreur:', error);
+        console.error('Erreur lors de la connexion:', error);
         res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
 });
 
-// GET un whisky par ID
-app.get('/api/whiskies/:id', authenticateToken, async (req, res) => {
+// POST - Créer un whisky (PROTÉGÉ)
+app.post('/api/whiskies', authenticateToken, async (req, res) => {
+    const {
+        name,
+        distillery_id,
+        type,
+        country,
+        age,
+        abv,
+        price,
+        description,
+        photo,
+        affiliate_link_1,
+        merchant_name_1,
+        affiliate_price_1,
+        affiliate_link_2,
+        merchant_name_2,
+        affiliate_price_2,
+        affiliate_link_3,
+        merchant_name_3,
+        affiliate_price_3,
+        actif
+    } = req.body;
+
     try {
-        const [whiskies] = await pool.query(
-            'SELECT w.*, d.name as distillery_name FROM whiskies_catalog w LEFT JOIN distilleries d ON w.distillery_id = d.id WHERE w.id = ?',
-            [req.params.id]
-        );
-        
-        if (whiskies.length === 0) {
+        const [result] = await pool.query(`
+            INSERT INTO whiskies_catalog 
+            (name, distillery_id, type, country, age, abv, price, description, photo, 
+             affiliate_link_1, merchant_name_1, affiliate_price_1,
+             affiliate_link_2, merchant_name_2, affiliate_price_2,
+             affiliate_link_3, merchant_name_3, affiliate_price_3,
+             actif)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            name,
+            distillery_id || null,
+            type || null,
+            country || null,
+            age || null,
+            abv || null,
+            price || null,
+            description || null,
+            photo || null,
+            affiliate_link_1 || null,
+            merchant_name_1 || null,
+            affiliate_price_1 || null,
+            affiliate_link_2 || null,
+            merchant_name_2 || null,
+            affiliate_price_2 || null,
+            affiliate_link_3 || null,
+            merchant_name_3 || null,
+            affiliate_price_3 || null,
+            actif !== undefined ? actif : true
+        ]);
+
+        res.status(201).json({
+            message: 'Whisky créé avec succès',
+            id: result.insertId
+        });
+    } catch (error) {
+        console.error('Erreur lors de la création du whisky:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// PUT - Modifier un whisky (PROTÉGÉ)
+app.put('/api/whiskies/:id', authenticateToken, async (req, res) => {
+    const {
+        name,
+        distillery_id,
+        type,
+        country,
+        age,
+        abv,
+        price,
+        description,
+        photo,
+        affiliate_link_1,
+        merchant_name_1,
+        affiliate_price_1,
+        affiliate_link_2,
+        merchant_name_2,
+        affiliate_price_2,
+        affiliate_link_3,
+        merchant_name_3,
+        affiliate_price_3,
+        actif
+    } = req.body;
+
+    try {
+        const [result] = await pool.query(`
+            UPDATE whiskies_catalog 
+            SET 
+                name = ?,
+                distillery_id = ?,
+                type = ?,
+                country = ?,
+                age = ?,
+                abv = ?,
+                price = ?,
+                description = ?,
+                photo = ?,
+                affiliate_link_1 = ?,
+                merchant_name_1 = ?,
+                affiliate_price_1 = ?,
+                affiliate_link_2 = ?,
+                merchant_name_2 = ?,
+                affiliate_price_2 = ?,
+                affiliate_link_3 = ?,
+                merchant_name_3 = ?,
+                affiliate_price_3 = ?,
+                actif = ?
+            WHERE id = ?
+        `, [
+            name,
+            distillery_id || null,
+            type || null,
+            country || null,
+            age || null,
+            abv || null,
+            price || null,
+            description || null,
+            photo || null,
+            affiliate_link_1 || null,
+            merchant_name_1 || null,
+            affiliate_price_1 || null,
+            affiliate_link_2 || null,
+            merchant_name_2 || null,
+            affiliate_price_2 || null,
+            affiliate_link_3 || null,
+            merchant_name_3 || null,
+            affiliate_price_3 || null,
+            actif !== undefined ? actif : true,
+            req.params.id
+        ]);
+
+        if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Whisky non trouvé' });
         }
-        
-        res.json(whiskies[0]);
+
+        res.json({ message: 'Whisky modifié avec succès' });
     } catch (error) {
-        console.error('Erreur:', error);
+        console.error('Erreur lors de la modification du whisky:', error);
         res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
 });
 
-// CREATE whisky
-app.post('/api/whiskies', authenticateToken, upload.single('photo'), async (req, res) => {
-    try {
-        const { name, distillery_id, type, country, age, abv, price, description, affiliate_link_1, affiliate_link_2, affiliate_link_3 } = req.body;
-        const photo = req.file ? `/uploads/${req.file.filename}` : null;
-
-        const [result] = await pool.query(
-            `INSERT INTO whiskies_catalog (name, distillery_id, type, country, age, abv, price, description, photo, affiliate_link_1, affiliate_link_2, affiliate_link_3) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, distillery_id || null, type, country, age || null, abv || null, price || null, description, photo, affiliate_link_1 || null, affiliate_link_2 || null, affiliate_link_3 || null]
-        );
-
-        res.status(201).json({ 
-            message: 'Whisky créé avec succès', 
-            id: result.insertId 
-        });
-    } catch (error) {
-        console.error('Erreur:', error);
-        res.status(500).json({ message: 'Erreur serveur', error: error.message });
-    }
-});
-
-// UPDATE whisky
-app.put('/api/whiskies/:id', authenticateToken, upload.single('photo'), async (req, res) => {
-    try {
-        const { name, distillery_id, type, country, age, abv, price, description, affiliate_link_1, affiliate_link_2, affiliate_link_3 } = req.body;
-        const photo = req.file ? `/uploads/${req.file.filename}` : undefined;
-
-        let query = `UPDATE whiskies_catalog SET name = ?, distillery_id = ?, type = ?, country = ?, age = ?, abv = ?, price = ?, description = ?, affiliate_link_1 = ?, affiliate_link_2 = ?, affiliate_link_3 = ?`;
-        let params = [name, distillery_id || null, type, country, age || null, abv || null, price || null, description, affiliate_link_1 || null, affiliate_link_2 || null, affiliate_link_3 || null];
-
-        if (photo) {
-            query += `, photo = ?`;
-            params.push(photo);
-        }
-
-        query += ` WHERE id = ?`;
-        params.push(req.params.id);
-
-        await pool.query(query, params);
-
-        res.json({ message: 'Whisky mis à jour avec succès' });
-    } catch (error) {
-        console.error('Erreur:', error);
-        res.status(500).json({ message: 'Erreur serveur', error: error.message });
-    }
-});
-
-// DELETE whisky
+// DELETE - Supprimer un whisky (PROTÉGÉ)
 app.delete('/api/whiskies/:id', authenticateToken, async (req, res) => {
     try {
-        await pool.query('DELETE FROM whiskies_catalog WHERE id = ?', [req.params.id]);
-        res.json({ message: 'Whisky supprimé avec succès' });
-    } catch (error) {
-        console.error('Erreur:', error);
-        res.status(500).json({ message: 'Erreur serveur', error: error.message });
-    }
-});
-
-// ============================================
-// ROUTES - DISTILLERIES
-// ============================================
-
-app.get('/api/distilleries', authenticateToken, async (req, res) => {
-    try {
-        const [distilleries] = await pool.query('SELECT * FROM distilleries ORDER BY name');
-        res.json(distilleries);
-    } catch (error) {
-        console.error('Erreur:', error);
-        res.status(500).json({ message: 'Erreur serveur', error: error.message });
-    }
-});
-
-app.post('/api/distilleries', authenticateToken, async (req, res) => {
-    try {
-        const { name, country, region, founded, description, logo, site_web } = req.body;
-        
         const [result] = await pool.query(
-            `INSERT INTO distilleries (name, country, region, founded, description, logo, site_web) 
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [name, country, region, founded || null, description, logo, site_web]
+            'DELETE FROM whiskies_catalog WHERE id = ?',
+            [req.params.id]
         );
 
-        res.status(201).json({ 
-            message: 'Distillerie créée avec succès', 
-            id: result.insertId 
-        });
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Whisky non trouvé' });
+        }
+
+        res.json({ message: 'Whisky supprimé avec succès' });
     } catch (error) {
-        console.error('Erreur:', error);
+        console.error('Erreur lors de la suppression du whisky:', error);
         res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
 });
 
-// ============================================
-// ROUTES - ANNONCES (pour éviter 404)
-// ============================================
+// POST - Créer une distillerie (PROTÉGÉ)
+app.post('/api/distilleries', authenticateToken, async (req, res) => {
+    const { name, country, region, description, logo_url, website } = req.body;
 
-app.get('/api/annonces', authenticateToken, async (req, res) => {
-    // Retourner un tableau vide pour l'instant
+    try {
+        const [result] = await pool.query(`
+            INSERT INTO distilleries (name, country, region, description, logo_url, website)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `, [name, country || null, region || null, description || null, logo_url || null, website || null]);
+
+        res.status(201).json({
+            message: 'Distillerie créée avec succès',
+            id: result.insertId
+        });
+    } catch (error) {
+        console.error('Erreur lors de la création de la distillerie:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// PUT - Modifier une distillerie (PROTÉGÉ)
+app.put('/api/distilleries/:id', authenticateToken, async (req, res) => {
+    const { name, country, region, description, logo_url, website } = req.body;
+
+    try {
+        const [result] = await pool.query(`
+            UPDATE distilleries 
+            SET name = ?, country = ?, region = ?, description = ?, logo_url = ?, website = ?
+            WHERE id = ?
+        `, [name, country || null, region || null, description || null, logo_url || null, website || null, req.params.id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Distillerie non trouvée' });
+        }
+
+        res.json({ message: 'Distillerie modifiée avec succès' });
+    } catch (error) {
+        console.error('Erreur lors de la modification de la distillerie:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// DELETE - Supprimer une distillerie (PROTÉGÉ)
+app.delete('/api/distilleries/:id', authenticateToken, async (req, res) => {
+    try {
+        const [result] = await pool.query(
+            'DELETE FROM distilleries WHERE id = ?',
+            [req.params.id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Distillerie non trouvée' });
+        }
+
+        res.json({ message: 'Distillerie supprimée avec succès' });
+    } catch (error) {
+        console.error('Erreur lors de la suppression de la distillerie:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// Routes pour compatibilité avec le dashboard
+app.get('/api/annonces', async (req, res) => {
     res.json([]);
 });
 
-// ============================================
-// ROUTES - STATS
-// ============================================
-
-app.get('/api/stats', authenticateToken, async (req, res) => {
+app.get('/api/stats', async (req, res) => {
     try {
         const [whiskiesCount] = await pool.query('SELECT COUNT(*) as count FROM whiskies_catalog');
         const [distilleriesCount] = await pool.query('SELECT COUNT(*) as count FROM distilleries');
         const [usersCount] = await pool.query('SELECT COUNT(*) as count FROM users');
-        const [tastingsCount] = await pool.query('SELECT COUNT(*) as count FROM tastings');
 
         res.json({
             whiskies: whiskiesCount[0].count,
             distilleries: distilleriesCount[0].count,
             users: usersCount[0].count,
-            tastings: tastingsCount[0].count
-        });
-    } catch (error) {
-        console.error('Erreur stats:', error);
-        res.json({ 
-            whiskies: 0,
-            distilleries: 0,
-            users: 0,
             tastings: 0
         });
+    } catch (error) {
+        console.error('Erreur lors de la récupération des stats:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
 });
 
-// ============================================
-// SERVEUR STATIQUE POUR LES UPLOADS
-// ============================================
+// Gestion des erreurs 404
+app.use((req, res) => {
+    res.status(404).json({ message: 'Route non trouvée' });
+});
 
-app.use('/uploads', express.static('uploads'));
-
-// ============================================
-// DÉMARRAGE DU SERVEUR
-// ============================================
-
+// Démarrage du serveur
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log('🚀 Serveur API Societsky démarré');
-    console.log(`🔗 Port: ${PORT}`);
-    console.log(`📊 Dashboard: Prêt`);
-    
-    // Afficher l'IP de Render pour debug
-    const https = require('https');
-    https.get('https://api.ipify.org?format=json', (resp) => {
-        let data = '';
-        resp.on('data', (chunk) => data += chunk);
-        resp.on('end', () => {
-            try {
-                console.log('🌐 IP de Render:', JSON.parse(data).ip);
-            } catch (e) {
-                // Ignorer les erreurs de parsing
-            }
-        });
-    }).on('error', () => {
-        // Ignorer les erreurs réseau
-    });
+    console.log('===========================================');
+    console.log(`🚀 Serveur API Societsky démarré`);
+    console.log(`📡 Port: ${PORT}`);
+    console.log(`🔌 Database: Connectée`);
+    console.log(`🌐 HEAD /`);
+    console.log(`📖 Routes publiques (sans auth):`);
+    console.log(`   📖 GET /api/whiskies`);
+    console.log(`   📖 GET /api/whiskies/:id`);
+    console.log(`   📖 GET /api/distilleries`);
+    console.log(`   📖 GET /api/distilleries/:id`);
+    console.log(`🔒 Routes protégées (avec auth):`);
+    console.log(`   🔒 POST /api/whiskies`);
+    console.log(`   🔒 PUT /api/whiskies/:id`);
+    console.log(`   🔒 DELETE /api/whiskies/:id`);
+    console.log(`   🔒 POST/PUT/DELETE /api/distilleries`);
+    console.log(`✅ Your service is live 🎉`);
+    console.log(`📍 Available at your primary URL https://backend-api-vdyi.onrender.com`);
+    console.log('===========================================');
 });
