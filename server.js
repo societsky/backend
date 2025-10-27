@@ -208,7 +208,7 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 });
 
 // ============================================
-// ROUTES - WHISKIES
+// ROUTES - WHISKIES (utilise whiskies_catalog)
 // ============================================
 
 // GET tous les whiskies
@@ -216,7 +216,7 @@ app.get('/api/whiskies', authenticateToken, async (req, res) => {
     try {
         const [whiskies] = await pool.query(`
             SELECT w.*, d.name as distillery_name 
-            FROM whiskies w
+            FROM whiskies_catalog w
             LEFT JOIN distilleries d ON w.distillery_id = d.id
             ORDER BY w.created_at DESC
         `);
@@ -231,7 +231,7 @@ app.get('/api/whiskies', authenticateToken, async (req, res) => {
 app.get('/api/whiskies/:id', authenticateToken, async (req, res) => {
     try {
         const [whiskies] = await pool.query(
-            'SELECT w.*, d.name as distillery_name FROM whiskies w LEFT JOIN distilleries d ON w.distillery_id = d.id WHERE w.id = ?',
+            'SELECT w.*, d.name as distillery_name FROM whiskies_catalog w LEFT JOIN distilleries d ON w.distillery_id = d.id WHERE w.id = ?',
             [req.params.id]
         );
         
@@ -253,7 +253,7 @@ app.post('/api/whiskies', authenticateToken, upload.single('photo'), async (req,
         const photo = req.file ? `/uploads/${req.file.filename}` : null;
 
         const [result] = await pool.query(
-            `INSERT INTO whiskies (name, distillery_id, type, country, age, abv, price, description, photo, affiliate_link_1, affiliate_link_2, affiliate_link_3) 
+            `INSERT INTO whiskies_catalog (name, distillery_id, type, country, age, abv, price, description, photo, affiliate_link_1, affiliate_link_2, affiliate_link_3) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [name, distillery_id || null, type, country, age || null, abv || null, price || null, description, photo, affiliate_link_1 || null, affiliate_link_2 || null, affiliate_link_3 || null]
         );
@@ -274,7 +274,7 @@ app.put('/api/whiskies/:id', authenticateToken, upload.single('photo'), async (r
         const { name, distillery_id, type, country, age, abv, price, description, affiliate_link_1, affiliate_link_2, affiliate_link_3 } = req.body;
         const photo = req.file ? `/uploads/${req.file.filename}` : undefined;
 
-        let query = `UPDATE whiskies SET name = ?, distillery_id = ?, type = ?, country = ?, age = ?, abv = ?, price = ?, description = ?, affiliate_link_1 = ?, affiliate_link_2 = ?, affiliate_link_3 = ?`;
+        let query = `UPDATE whiskies_catalog SET name = ?, distillery_id = ?, type = ?, country = ?, age = ?, abv = ?, price = ?, description = ?, affiliate_link_1 = ?, affiliate_link_2 = ?, affiliate_link_3 = ?`;
         let params = [name, distillery_id || null, type, country, age || null, abv || null, price || null, description, affiliate_link_1 || null, affiliate_link_2 || null, affiliate_link_3 || null];
 
         if (photo) {
@@ -297,7 +297,7 @@ app.put('/api/whiskies/:id', authenticateToken, upload.single('photo'), async (r
 // DELETE whisky
 app.delete('/api/whiskies/:id', authenticateToken, async (req, res) => {
     try {
-        await pool.query('DELETE FROM whiskies WHERE id = ?', [req.params.id]);
+        await pool.query('DELETE FROM whiskies_catalog WHERE id = ?', [req.params.id]);
         res.json({ message: 'Whisky supprimé avec succès' });
     } catch (error) {
         console.error('Erreur:', error);
@@ -336,6 +336,43 @@ app.post('/api/distilleries', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Erreur:', error);
         res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+});
+
+// ============================================
+// ROUTES - ANNONCES (pour éviter 404)
+// ============================================
+
+app.get('/api/annonces', authenticateToken, async (req, res) => {
+    // Retourner un tableau vide pour l'instant
+    res.json([]);
+});
+
+// ============================================
+// ROUTES - STATS
+// ============================================
+
+app.get('/api/stats', authenticateToken, async (req, res) => {
+    try {
+        const [whiskiesCount] = await pool.query('SELECT COUNT(*) as count FROM whiskies_catalog');
+        const [distilleriesCount] = await pool.query('SELECT COUNT(*) as count FROM distilleries');
+        const [usersCount] = await pool.query('SELECT COUNT(*) as count FROM users');
+        const [tastingsCount] = await pool.query('SELECT COUNT(*) as count FROM tastings');
+
+        res.json({
+            whiskies: whiskiesCount[0].count,
+            distilleries: distilleriesCount[0].count,
+            users: usersCount[0].count,
+            tastings: tastingsCount[0].count
+        });
+    } catch (error) {
+        console.error('Erreur stats:', error);
+        res.json({ 
+            whiskies: 0,
+            distilleries: 0,
+            users: 0,
+            tastings: 0
+        });
     }
 });
 
