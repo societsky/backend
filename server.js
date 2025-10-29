@@ -11,25 +11,31 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configuration base de données
+// Configuration base de données avec SSL
 const dbConfig = {
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
+    port: process.env.DB_PORT || 3306,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
 };
+
+// Ajouter SSL si nécessaire
+if (process.env.DB_SSL === 'true') {
+    dbConfig.ssl = {
+        rejectUnauthorized: true
+    };
+}
 
 const pool = mysql.createPool(dbConfig);
 
 // JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production';
 
-// ===================================================
-// MIDDLEWARE D'AUTHENTIFICATION (POUR ROUTES PROTÉGÉES)
-// ===================================================
+// Middleware d'authentification
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -46,10 +52,6 @@ const authenticateToken = (req, res, next) => {
         next();
     });
 };
-
-// ===================================================
-// ROUTES PUBLIQUES (SANS AUTHENTIFICATION)
-// ===================================================
 
 // Route de test
 app.get('/', (req, res) => {
@@ -75,10 +77,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// ============================================
-// ROUTES PUBLIQUES - WHISKIES (LECTURE SEULE)
-// ============================================
-
 // GET - Liste des whiskies (PUBLIC)
 app.get('/api/whiskies', async (req, res) => {
     try {
@@ -89,6 +87,7 @@ app.get('/api/whiskies', async (req, res) => {
                 d.logo_url
             FROM whiskies_catalog w
             LEFT JOIN distilleries d ON w.distillery_id = d.id
+            WHERE w.actif = true
             ORDER BY w.name ASC
         `);
         
@@ -124,10 +123,6 @@ app.get('/api/whiskies/:id', async (req, res) => {
     }
 });
 
-// ============================================
-// ROUTES PUBLIQUES - DISTILLERIES (LECTURE SEULE)
-// ============================================
-
 // GET - Liste des distilleries (PUBLIC)
 app.get('/api/distilleries', async (req, res) => {
     try {
@@ -161,10 +156,6 @@ app.get('/api/distilleries/:id', async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
 });
-
-// ===================================================
-// ROUTES PROTÉGÉES (NÉCESSITENT AUTHENTIFICATION)
-// ===================================================
 
 // POST - Connexion admin
 app.post('/api/login', async (req, res) => {
@@ -439,7 +430,7 @@ app.delete('/api/distilleries/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// Routes pour compatibilité avec le dashboard
+// Routes pour compatibilité
 app.get('/api/annonces', async (req, res) => {
     res.json([]);
 });
@@ -473,19 +464,9 @@ app.listen(PORT, () => {
     console.log('===========================================');
     console.log(`🚀 Serveur API Societsky démarré`);
     console.log(`📡 Port: ${PORT}`);
-    console.log(`🔌 Database: Connectée`);
-    console.log(`🌐 HEAD /`);
-    console.log(`📖 Routes publiques (sans auth):`);
-    console.log(`   📖 GET /api/whiskies`);
-    console.log(`   📖 GET /api/whiskies/:id`);
-    console.log(`   📖 GET /api/distilleries`);
-    console.log(`   📖 GET /api/distilleries/:id`);
-    console.log(`🔒 Routes protégées (avec auth):`);
-    console.log(`   🔒 POST /api/whiskies`);
-    console.log(`   🔒 PUT /api/whiskies/:id`);
-    console.log(`   🔒 DELETE /api/whiskies/:id`);
-    console.log(`   🔒 POST/PUT/DELETE /api/distilleries`);
+    console.log(`🔌 Database: ${process.env.DB_HOST}`);
+    console.log(`🔐 SSL: ${process.env.DB_SSL === 'true' ? 'Activé' : 'Désactivé'}`);
+    console.log(`📖 Routes publiques disponibles`);
     console.log(`✅ Your service is live 🎉`);
-    console.log(`📍 Available at your primary URL https://backend-api-vdyi.onrender.com`);
     console.log('===========================================');
 });
